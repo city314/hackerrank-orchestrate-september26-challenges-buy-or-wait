@@ -140,6 +140,36 @@ def _cadence(dates: list[date]) -> tuple[int | None, int | None]:
     return None, None
 
 
+def _drop_outliers(rows: list[dict], factor: float = 3.0) -> list[dict]:
+    """Remove amounts far outside the group's usual range.
+
+    A single bulk purchase filed under ``groceries`` is a one-off, not a larger
+    instalment of the weekly shop, and letting it into the series would inflate
+    every projected occurrence.
+    """
+    amounts = [r["amount"] for r in rows if r["amount"]]
+    if len(amounts) < MIN_OCCURRENCES:
+        return rows
+    middle = statistics.median(amounts)
+    if middle <= 0:
+        return rows
+    kept = [r for r in rows if middle / factor <= r["amount"] <= middle * factor]
+    return kept if len(kept) >= MIN_OCCURRENCES else rows
+
+
+def _on_grid(rows: list[dict]) -> list[dict]:
+    """Keep only the occurrences that sit on the group's dominant cadence."""
+    dates = [r["cash_date"] for r in rows]
+    gaps = [(b - a).days for a, b in zip(dates, dates[1:])]
+    if not gaps:
+        return rows
+    step = statistics.mode(gaps)
+    if step <= 0:
+        return rows
+    anchor = dates[-1]
+    return [r for r in rows if (anchor - r["cash_date"]).days % step == 0]
+
+
 def detect(history: list[dict]) -> list[Series]:
     """Group settled history into recurring series.
 
@@ -155,19 +185,26 @@ def detect(history: list[dict]) -> list[Series]:
     series: list[Series] = []
     for (event_type, category, direction), rows in groups.items():
         rows.sort(key=lambda r: r["cash_date"])
-        # Two rows on the same day are one occurrence for cadence purposes.
+        rows = _drop_outliers(rows)
+        # Two rows on the same day are two separate purchases, not a larger
+        # instalment of the series: keep the first and treat the rest as one-offs.
         deduped: list[dict] = []
         for row in rows:
-            if deduped and deduped[-1]["cash_date"] == row["cash_date"]:
-                deduped[-1] = {**row, "amount": deduped[-1]["amount"] + row["amount"]}
-            else:
+            if not deduped or deduped[-1]["cash_date"] != row["cash_date"]:
                 deduped.append(dict(row))
         if len(deduped) < MIN_OCCURRENCES:
             continue
 
         period, day_of_month = _cadence([r["cash_date"] for r in deduped])
         if period is None and day_of_month is None:
-            continue
+            # A one-off sitting next to a real series can hide its cadence.
+            # Retry on just the occurrences that sit on a regular grid.
+            deduped = _on_grid(deduped)
+            if len(deduped) < MIN_OCCURRENCES:
+                continue
+            period, day_of_month = _cadence([r["cash_date"] for r in deduped])
+            if period is None and day_of_month is None:
+                continue
 
         last = deduped[-1]
         series.append(

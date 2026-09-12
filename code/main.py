@@ -20,6 +20,23 @@ from bow import evidence, forecast, llm, pipeline, usage
 from bow.loading import OUTPUT_COLUMNS, REPO_ROOT, Dataset
 
 
+def load_dotenv(path: str = os.path.join(REPO_ROOT, ".env")) -> None:
+    """Read KEY=VALUE lines from .env without adding a dependency.
+
+    Secrets stay out of the repository: .env is gitignored and nothing here
+    ever prints a value.
+    """
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def write_csv(rows: list[dict], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=OUTPUT_COLUMNS)
@@ -35,6 +52,7 @@ def main() -> int:
     parser.add_argument("--model", default=llm.DEFAULT_MODEL)
     args = parser.parse_args()
 
+    load_dotenv()
     data = Dataset()
     requests = data.sample_requests if args.samples else data.requests
     print(f"Buy or Wait? — {len(requests)} requests")

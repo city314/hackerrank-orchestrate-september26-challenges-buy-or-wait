@@ -7,11 +7,12 @@ amount every month. The spec is explicit that bonuses and commissions must not
 be counted until they settle, so the two must be separated before anything is
 projected forward.
 
-The separating signal is structural rather than lexical: contractual pay
-repeats on a fixed cadence for a constant amount, while commission does not.
-Gig-economy users have no constant stream at all, and for them the variable
-payouts *are* the income, so they are projected conservatively instead of
-being dropped.
+Amount stability alone cannot separate them: a second household salary moves
+month to month and is still real income, while a commission that happens to be
+flat is still contingent. The description is what distinguishes them, so a
+stream is judged by how the dataset labels its payments. Gig-economy users have
+no fixed-amount stream at all, and for them the variable payouts *are* the
+income, projected conservatively rather than dropped.
 """
 
 from __future__ import annotations
@@ -27,17 +28,43 @@ MIN_OCCURRENCES = 3
 DAY_TOLERANCE = 3
 
 
+# Income that is contingent on performance or luck. The spec says not to count
+# it until it settles, so a stream described this way is never projected.
+CONTINGENT_TERMS = (
+    "commission", "bonus", "arrears", "prize", "lottery", "windfall",
+    "incentive", "gratuity",
+)
+# Wording that marks a payment as the last of its stream.
+TERMINAL_TERMS = ("final", "last ", "closing")
+
+
+def _has_term(text: str, terms) -> bool:
+    lowered = (text or "").lower()
+    return any(term in lowered for term in terms)
+
+
 @dataclass
 class Stream:
     """One coherent income stream."""
 
-    events: list[tuple[date, float, str]]  # (date, amount, event_id)
+    events: list[tuple[date, float, str, str]]  # (date, amount, event_id, description)
     period_days: int | None
     day_of_month: int | None
 
     @property
+    def is_contingent(self) -> bool:
+        """A commission or bonus stream, which must not be projected forward."""
+        hits = sum(1 for e in self.events if _has_term(e[3], CONTINGENT_TERMS))
+        return hits * 2 > len(self.events)
+
+    @property
+    def has_ended(self) -> bool:
+        """The most recent payment announces itself as the final one."""
+        return _has_term(self.events[-1][3], TERMINAL_TERMS)
+
+    @property
     def amounts(self) -> list[float]:
-        return [a for _, a, _ in self.events]
+        return [e[1] for e in self.events]
 
     @property
     def is_constant(self) -> bool:
@@ -45,7 +72,7 @@ class Stream:
         return len(set(round(a, 2) for a in self.amounts)) == 1
 
     @property
-    def last(self) -> tuple[date, float, str]:
+    def last(self) -> tuple[date, float, str, str]:
         return self.events[-1]
 
     def amount(self, policy: str) -> float:
@@ -67,7 +94,7 @@ class Stream:
         return statistics.fmean(amounts)
 
 
-def _monthly_clusters(events: list[tuple[date, float, str]]) -> tuple[list[Stream], list]:
+def _monthly_clusters(events: list[tuple[date, float, str, str]]) -> tuple[list[Stream], list]:
     """Split events into monthly streams keyed by pay day, plus leftovers."""
     buckets: dict[int, list] = {}
     for entry in events:
@@ -95,7 +122,7 @@ def _monthly_clusters(events: list[tuple[date, float, str]]) -> tuple[list[Strea
     return streams, leftover
 
 
-def _periodic_stream(events: list[tuple[date, float, str]]) -> Stream | None:
+def _periodic_stream(events: list[tuple[date, float, str, str]]) -> Stream | None:
     """Treat the whole set as one fixed-cadence stream, if it is regular."""
     events = sorted(events)
     if len(events) < MIN_OCCURRENCES:
@@ -111,12 +138,16 @@ def _periodic_stream(events: list[tuple[date, float, str]]) -> Stream | None:
     return Stream(events, int(round(median)), None)
 
 
-def detect(credits: list[tuple[date, float, str]]) -> list[Stream]:
+def detect(credits: list[tuple[date, float, str, str]]) -> list[Stream]:
     """Return the income streams a forecast may rely on.
 
-    Constant-amount streams win outright: when a user has contractual pay, the
-    variable streams alongside it are commission or bonus and the spec says not
-    to count them.
+    Streams described as commission, bonus or a prize are dropped: the spec
+    forbids counting them before they settle. A second household salary is a
+    real, recurring stream even though its amount moves, so amount stability
+    alone is not enough to tell the two apart — the description is.
+
+    A stream whose latest payment calls itself the final one has ended, and is
+    reported so the caller can stop projecting it.
     """
     if not credits:
         return []
@@ -127,5 +158,9 @@ def detect(credits: list[tuple[date, float, str]]) -> list[Stream]:
         if extra is not None:
             streams.append(extra)
 
-    constant = [s for s in streams if s.is_constant]
-    return constant if constant else streams
+    kept = [s for s in streams if not s.is_contingent]
+    if kept:
+        return kept
+    # Every stream looks contingent: fall back to any constant one rather than
+    # forecasting a user with no income at all.
+    return [s for s in streams if s.is_constant]

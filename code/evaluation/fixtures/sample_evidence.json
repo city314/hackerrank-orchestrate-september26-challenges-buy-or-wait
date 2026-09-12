@@ -1,0 +1,77 @@
+{
+  "request_02": {
+    "income_update": {"new_recurring_amount": 42750000, "effective_from": "2025-08-15"},
+    "notes": ["Monthly salary rises to IDR 42,750,000 from 2025-08-15."]
+  },
+  "request_03": {
+    "event_amounts": [{"event_id": "event_253", "amount": 4365000, "currency": "IDR"}],
+    "notes": ["Payslip net pay IDR 4,365,000 (gross 4,500,000)."]
+  },
+  "request_04": {
+    "notes": ["Quarterly bonus still unapproved; no amount or date confirmed."]
+  },
+  "request_06": {
+    "income_update": {"new_recurring_amount": 1037.52},
+    "notes": ["Temporary monthly pay EUR 1037.52 continues for the next payroll."]
+  },
+  "request_07": {
+    "income_update": {"next_payment_date": "2024-09-23"},
+    "notes": ["Confirmed salary moved to 2024-09-23."]
+  },
+  "request_08": {
+    "income_update": {"one_off_next_amount": 1422.85},
+    "notes": ["Next salary only reduced to EUR 1422.85 for approved unpaid leave."]
+  },
+  "request_10": {
+    "income_update": {"one_off_next_amount": 0},
+    "notes": ["Next QuickCrew payout still pending and not withdrawable."]
+  },
+  "request_11": {
+    "income_update": {"new_recurring_amount": 38760000},
+    "notes": ["Confirmed base salary IDR 38,760,000; commission unapproved."]
+  },
+  "request_12": {
+    "income_update": {"income_stops": true},
+    "notes": ["Seasonal contract ended; no renewal or off-season income confirmed."]
+  },
+  "request_14": {
+    "income_update": {"new_recurring_amount": 2717, "effective_from": "2025-08-15"},
+    "notes": ["Regular salary EUR 2717 resumes 2025-08-15; new childcare cost has no stated amount."]
+  },
+  "request_15": {
+    "income_update": {"new_recurring_amount": 1661, "effective_from": "2026-01-15"},
+    "notes": ["First salary EUR 1661 confirmed for 2026-01-15."]
+  },
+  "request_16": {
+    "event_amounts": [{"event_id": "event_1442", "amount": 100000, "currency": "INR"}],
+    "recurring_expense_changes": [
+      {"category": "rent", "increase_pct": 12, "effective_from": "2023-09-01"}
+    ],
+    "notes": ["Rent receipt balance due INR 100,000.", "Renewed lease raises rent 12% from the next payment."]
+  },
+  "request_17": {
+    "event_amounts": [{"event_id": "event_1545", "amount": 41272, "currency": "INR"}],
+    "notes": ["Grocery receipt net amount INR 41,272 dated 27/02/2026."]
+  },
+  "request_18": {
+    "notes": ["Matching debit and credit are an own-account transfer; no such pair exists in the supplied events."]
+  },
+  "request_19": {
+    "event_amounts": [{"event_id": "event_1700", "amount": 2854, "currency": "INR"}],
+    "notes": ["Delivered grocery order item bill INR 2,854."]
+  },
+  "request_20": {
+    "event_amounts": [{"event_id": "event_1786", "amount": 704.05, "currency": "INR"}],
+    "cancelled_event_ids": ["event_1785"],
+    "notes": ["Telecom bill INR 704.05 due 06-Feb-2026.", "Merchant refund initiated but not credited."]
+  },
+  "request_22": {
+    "notes": ["Portfolio value up but no units sold and no cash proceeds."]
+  },
+  "request_23": {
+    "notes": ["Prize claim verified but still processing; not credited."]
+  },
+  "request_24": {
+    "notes": ["Prize proceeds already credited; no further scheduled payments."]
+  }
+}

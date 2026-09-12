@@ -37,6 +37,9 @@ class Config:
     # Pending debits are reserved; pending credits are never counted.
     reserve_pending_debits: bool = True
     count_scheduled_credits: bool = True
+    # An income stream silent for longer than this many of its own cycles has
+    # stopped and is no longer projected.
+    lapse_factor: float = 3.0
 
 
 @dataclass
@@ -227,7 +230,7 @@ def _income_flows(
     """
     flows: list[Flow] = list(scheduled_credits)
     credits = [
-        (row["cash_date"], row["amount"], row["event_id"])
+        (row["cash_date"], row["amount"], row["event_id"], row.get("description", ""))
         for row in history
         if row["direction"] == "credit"
     ]
@@ -239,7 +242,7 @@ def _income_flows(
     projections: list[tuple[date, float, str, int | None, int | None]] = []
     for stream in streams:
         amount = stream.amount(config.income_policy)
-        anchor_date, _, anchor_id = stream.last
+        anchor_date, _, anchor_id, _description = stream.last
         # A confirmed future credit on this stream's pay day supersedes the
         # projected amount and re-anchors the cadence.
         aligned = [
@@ -252,6 +255,13 @@ def _income_flows(
             confirmed = max(aligned, key=lambda f: f.on)
             anchor_date, amount, anchor_id = confirmed.on, confirmed.amount, confirmed.event_id or ""
             claimed.update(f.on for f in aligned)
+        lapsed = (rd - anchor_date).days > config.lapse_factor * (stream.period_days or 30)
+        if (stream.has_ended or lapsed) and not aligned:
+            # Either the latest payment calls itself the final one, or the
+            # stream has been silent for well over its own cadence. Both mean
+            # it has stopped, and projecting it would invent income the user
+            # is not going to receive.
+            continue
         projections.append((anchor_date, amount, anchor_id, stream.period_days, stream.day_of_month))
 
     # A confirmed future credit that matches no detected stream still
@@ -263,14 +273,29 @@ def _income_flows(
             continue
         projections.append((flow.on, flow.amount, flow.event_id or "", None, flow.on.day))
 
+    update = income_update or {}
+    if not projections and update.get("new_recurring_amount"):
+        # The user has too little settled history to detect a stream — a new
+        # job, or pay resuming after leave — but a message confirms both the
+        # amount and when it starts, which is enough to project from.
+        starts = update.get("effective_from") or update.get("next_payment_date")
+        if starts:
+            first = date.fromisoformat(starts)
+            projections.append((first, update["new_recurring_amount"], "", None, first.day))
+            if first > rd:
+                flows.append(
+                    Flow(first, update["new_recurring_amount"], "income", "", "salary",
+                         source="evidence")
+                )
+
     if not config.extend_scheduled_income:
         return flows
 
-    update = income_update or {}
-    if update.get("income_stops"):
-        # A contract ended with no renewal confirmed: only already-confirmed
-        # credits survive, and nothing is projected beyond them.
-        return flows
+    # Note on income_stops: a message saying no renewal or off-season work has
+    # been confirmed warns against *inventing* extra income. It is not a
+    # statement that established pay ceases, and treating it as one made the
+    # forecast markedly worse on the solved samples, so it is recorded as
+    # evidence but does not remove an already-established stream.
 
     confirmed_amount = update.get("new_recurring_amount")
     effective_from = (
@@ -369,6 +394,7 @@ def build(
             history.append(
                 {
                     "event_id": eid,
+                    "description": row["description"],
                     "event_type": row["event_type"],
                     "category": row["category"],
                     "direction": row["direction"],
