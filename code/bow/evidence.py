@@ -21,6 +21,13 @@ PATCH_STORE = os.path.join(
     "patches.json",
 )
 
+SEPARATOR = "\n===== {} =====\n"
+
+BATCH_HEADER = (
+    "Several customers follow. Return one entry per request_id in the "
+    "patches array, using exactly the request_id values given.\n"
+)
+
 SYSTEM_PROMPT = """\
 You extract financial facts for a bank's affordability engine.
 
@@ -41,12 +48,19 @@ Rules:
    the customer's own accounts is not spending and not income: report BOTH event
    ids under cancelled_event_ids.
 4. income_update describes recurring salary only.
-   - new_recurring_amount: the confirmed ongoing amount from now on.
+   - new_recurring_amount: the confirmed ongoing amount from now on. A first
+     salary at a new job, or pay resuming after leave, counts as recurring:
+     report the amount and put the confirmed credit date in effective_from.
    - one_off_next_amount: use this instead when only the NEXT payment differs
-     (for example a one-month reduction for unpaid leave).
+     (for example a one-month reduction for unpaid leave). When a message says
+     the next payout is still pending, not yet closed, or not withdrawable,
+     report one_off_next_amount 0: that payment cannot be relied on, but later
+     ones still can.
    - next_payment_date: only when the pay date itself moved.
-   - income_stops: true only when the message says no further income is
-     confirmed (a contract ended with no renewal).
+   - income_stops: true only when the message says income itself ceases. A
+     message saying no renewal or off-season work has been confirmed is a
+     warning against assuming extra income, not a statement that established
+     pay ends — leave income_stops unset for that.
 5. recurring_expense_changes covers a confirmed change to an existing recurring
    bill. Use increase_pct for a percentage change and new_amount for a stated
    amount. If a message announces a NEW recurring cost without stating its
@@ -54,7 +68,10 @@ Rules:
 6. When an image is supplied for an event whose amount is blank, read the amount
    that actually reached the account (the net or credited figure, not the gross)
    and report it under event_amounts.
-7. If nothing in the evidence is relevant, return empty arrays and an empty
+7. cancelled_event_ids is for money that will not arrive or leave. Do not put
+   an unrealised valuation or other non-cash record there; those are already
+   excluded.
+8. If nothing in the evidence is relevant, return empty arrays and an empty
    income_update.
 
 Return JSON only.
@@ -134,28 +151,65 @@ def build_parts(data: Dataset, request: Request) -> tuple[list[dict], list[str]]
     return parts, used_images
 
 
+BATCH_SIZE = 8
+
+
 def extract(
     data: Dataset,
     requests: list[Request],
     client: llm.Client | None = None,
     verbose: bool = True,
+    batch_size: int = BATCH_SIZE,
 ) -> dict[str, dict]:
-    """Extract a validated patch for every request that has evidence."""
+    """Extract a validated patch for every request that has evidence.
+
+    Requests carrying an image are sent on their own so the model sees the
+    document in isolation. Text-only requests are batched, which cuts the call
+    count by roughly an order of magnitude and keeps a full run inside a
+    free-tier daily quota without changing what is asked of the model.
+    """
     client = client or llm.Client()
     known = set(data.events["event_id"])
     patches: dict[str, dict] = {}
 
-    for i, request in enumerate(requests, 1):
+    solo: list[tuple[Request, list[dict]]] = []
+    batchable: list[tuple[Request, list[dict]]] = []
+    for request in requests:
         built = build_parts(data, request)
         if built is None:
             continue
-        parts, _ = built
+        parts, images = built
+        (solo if images else batchable).append((request, parts))
+
+    n_batches = -(-len(batchable) // batch_size)
+    if verbose:
+        print(
+            f"  evidence: {len(solo)} with images + {len(batchable)} text-only "
+            f"-> {len(solo) + n_batches} calls"
+        )
+
+    for i, (request, parts) in enumerate(solo, 1):
         raw = client.generate_json(SYSTEM_PROMPT, parts, schema.PATCH_JSON_SCHEMA)
-        if raw is None:
-            continue
-        patches[request.request_id] = schema.validate(raw, known)
-        if verbose and i % 25 == 0:
-            print(f"  evidence: {i}/{len(requests)} scanned, {len(patches)} patches")
+        if raw is not None:
+            patches[request.request_id] = schema.validate(raw, known)
+        if verbose:
+            print(f"  evidence: image {i}/{len(solo)}, {len(patches)} patches")
+
+    for start in range(0, len(batchable), batch_size):
+        chunk = batchable[start : start + batch_size]
+        parts: list[dict] = [{"text": BATCH_HEADER}]
+        for request, request_parts in chunk:
+            parts.append({"text": SEPARATOR.format(request.request_id)})
+            parts.extend(request_parts)
+        raw = client.generate_json(SYSTEM_PROMPT, parts, schema.BATCH_JSON_SCHEMA)
+        wanted = {r.request_id for r, _ in chunk}
+        entries = (raw or {}).get("patches", []) if isinstance(raw, dict) else []
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("request_id") in wanted:
+                patches[entry["request_id"]] = schema.validate(entry, known)
+        if verbose:
+            done = min(start + batch_size, len(batchable))
+            print(f"  evidence: batched {done}/{len(batchable)}, {len(patches)} patches")
     return patches
 
 

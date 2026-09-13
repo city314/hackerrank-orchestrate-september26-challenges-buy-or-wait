@@ -118,6 +118,26 @@ def _as_amount(value) -> float | None:
     return amount if 0 <= amount < 1e15 else None
 
 
+BATCH_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "patches": {
+            "type": "array",
+            "description": "One entry per request_id given, in the same order.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "request_id": {"type": "string"},
+                    **PATCH_JSON_SCHEMA["properties"],
+                },
+                "required": ["request_id"],
+            },
+        }
+    },
+    "required": ["patches"],
+}
+
+
 def validate(raw: dict, known_event_ids: set[str]) -> dict:
     """Coerce a model response into a safe patch, dropping anything unsupported.
 

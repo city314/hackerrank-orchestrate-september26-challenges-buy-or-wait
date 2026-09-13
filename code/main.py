@@ -24,17 +24,28 @@ def load_dotenv(path: str = os.path.join(REPO_ROOT, ".env")) -> None:
     """Read KEY=VALUE lines from .env without adding a dependency.
 
     Secrets stay out of the repository: .env is gitignored and nothing here
-    ever prints a value.
+    ever prints a value. PowerShell redirection writes UTF-16 on Windows, so
+    the encoding is sniffed rather than assumed.
     """
     if not os.path.exists(path):
         return
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    for encoding in ("utf-8-sig", "utf-16", "utf-8", "latin-1"):
+        try:
+            text = blob.decode(encoding)
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    else:
+        return
+
+    for line in text.splitlines():
+        line = line.strip().lstrip("﻿")
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
 def write_csv(rows: list[dict], path: str) -> None:
@@ -67,11 +78,11 @@ def main() -> int:
             patches = evidence.load_cached_patches(data)
         else:
             print(f"  evidence: extracting with {args.model}")
-            # Evidence is per user, so both request sets share one cache.
-            patches = {
-                **evidence.load(),
-                **evidence.extract(data, requests, client),
-            }
+            # Evidence is per user and requests are batched, so extraction
+            # always covers the same full set. That keeps the cache stable no
+            # matter which subset is being solved.
+            everything = data.requests + data.sample_requests
+            patches = evidence.extract(data, everything, client)
             evidence.save(patches)
             known = set(data.events["event_id"])
             from bow import schema

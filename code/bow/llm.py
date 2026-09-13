@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = os.environ.get("BOW_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.environ.get("BOW_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_CACHE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".cache", "llm"
 )
@@ -30,6 +30,13 @@ DEFAULT_CACHE = os.path.join(
 # Published Gemini pricing (USD per 1M tokens). Used only for the cost estimate
 # in the usage report; override with BOW_PRICE_IN / BOW_PRICE_OUT if it changes.
 PRICING = {
+    "gemini-3.5-flash-lite": (0.10, 0.40),
+    "gemini-3.1-flash-lite": (0.10, 0.40),
+    "gemini-flash-lite-latest": (0.10, 0.40),
+    "gemini-3.7-flash": (0.30, 2.50),
+    "gemini-3.6-flash": (0.30, 2.50),
+    "gemini-3.5-flash": (0.30, 2.50),
+    "gemini-3-flash-preview": (0.30, 2.50),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-flash-lite": (0.10, 0.40),
     "gemini-2.5-pro": (1.25, 10.00),
@@ -163,9 +170,17 @@ class Client:
                 with urllib.request.urlopen(request, timeout=120) as response:
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
-                # 429/5xx are worth retrying with backoff; 4xx are not.
+                # 429/5xx are worth retrying; anything else is a real error.
                 if exc.code not in (429, 500, 502, 503, 504):
                     return None
+                delay = _retry_delay(exc)
+                if delay is not None:
+                    # A daily quota reports a delay far beyond any sensible
+                    # wait; give up rather than stall the whole run.
+                    if delay > 90:
+                        return None
+                    time.sleep(delay + 1)
+                    continue
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
                 pass
             time.sleep(min(2**attempt, 20))
@@ -180,6 +195,22 @@ class Client:
             "estimated_cost_usd": round(u.cost_usd(), 4),
             "estimated_cost_per_request_usd": round(u.cost_usd() / max(requests_count, 1), 6),
         }
+
+
+def _retry_delay(exc: urllib.error.HTTPError) -> float | None:
+    """The server's own RetryInfo, in seconds, when it supplies one."""
+    try:
+        body = json.loads(exc.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001 - the body is best-effort diagnostics
+        return None
+    for detail in body.get("error", {}).get("details", []):
+        if detail.get("@type", "").endswith("RetryInfo"):
+            raw = str(detail.get("retryDelay", "")).rstrip("s")
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+    return None
 
 
 def image_part(path: str) -> dict:

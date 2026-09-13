@@ -24,6 +24,10 @@ root (gitignored, never printed):
 GOOGLE_API_KEY=your-key-here
 ```
 
+The default model is `gemini-3.5-flash-lite`; override with `BOW_MODEL`. The
+full run is 42 calls because text-only requests are batched eight to a call —
+one request per call would be 219, which does not fit a free-tier daily quota.
+
 Without a key the pipeline still runs end to end and produces a complete,
 valid `output.csv`; it simply skips the message and image evidence.
 
@@ -96,3 +100,8 @@ balance.
 `code/evaluation/fixtures/` holds a hand-built evidence patch for the sample
 users, used to test the patch applier without spending API calls. It covers
 only sample requests, which are not scored, and is never used for predictions.
+
+Measured against the solved samples, the evidence layer improves six of the
+seven requests it touches and costs one: a borderline case where the request is
+exactly affordable and a correctly-read rent increase tips it just over the
+line. Median error on `amount_safe_to_pay` is 7.7%.
