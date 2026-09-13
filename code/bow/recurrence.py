@@ -89,8 +89,13 @@ class Series:
             return statistics.fmean(amounts[-int(policy[4:]) :])
         raise ValueError(f"unknown forecast policy: {policy}")
 
-    def occurrences_between(self, start: date, end: date) -> list[date]:
-        """Project future occurrence dates in the half-open window (start, end]."""
+    def occurrences_between(self, start: date, end: date, include_start: bool = False) -> list[date]:
+        """Project future occurrence dates in the window up to and including ``end``.
+
+        An occurrence landing exactly on ``start`` has not settled yet — the
+        series' latest recorded occurrence is strictly earlier — so it is real
+        upcoming spending, not something already inside the opening balance.
+        """
         out: list[date] = []
         if self.day_of_month is not None:
             cursor = self.last_date
@@ -98,7 +103,7 @@ class Series:
                 cursor = _add_month(cursor, self.day_of_month)
                 if cursor > end:
                     break
-                if cursor > start:
+                if cursor > start or (include_start and cursor == start):
                     out.append(cursor)
         else:
             cursor = self.last_date
@@ -106,7 +111,7 @@ class Series:
                 cursor = cursor + timedelta(days=self.period_days)
                 if cursor > end:
                     break
-                if cursor > start:
+                if cursor > start or (include_start and cursor == start):
                     out.append(cursor)
         return out
 

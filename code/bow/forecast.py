@@ -27,7 +27,7 @@ class Config:
 
     horizon_days: int = HORIZON_DAYS
     # How to project the next amount of a variable recurring series.
-    variable_policy: str = "max3"
+    variable_policy: str = "mean4"
     # How to project a variable (gig-economy) income stream.
     income_policy: str = "mean"
     # Project recurring income forward from settled history.
@@ -40,6 +40,10 @@ class Config:
     # An income stream silent for longer than this many of its own cycles has
     # stopped and is no longer projected.
     lapse_factor: float = 3.0
+    # Count a recurring occurrence that falls on the request date itself.
+    include_request_date: bool = True
+    # A confirmed new pay date moves the whole cadence, not just one payment.
+    reanchor_moved_payday: bool = True
 
 
 @dataclass
@@ -124,7 +128,9 @@ class Forecast:
             base = s.forecast_amount(self.config.variable_policy)
             if anchor in reduced:
                 base = reduced[anchor]
-            for on in s.occurrences_between(start, self.horizon_end):
+            for on in s.occurrences_between(
+                start, self.horizon_end, self.config.include_request_date
+            ):
                 amount = self._apply_expense_changes(s.category, base, on)
                 signed = amount if s.direction == "credit" else -amount
                 flows.append(
@@ -212,6 +218,14 @@ def _flexibility_allows(series: recurrence.Series, profile: Profile) -> list[str
     if flex in ("reducible", "reducible_or_stoppable") and series.category in profile.willing_to_reduce:
         kinds.append("reduce_to")
     return kinds
+
+
+def _step_back_month(day: date) -> date:
+    """The same day of the previous month, clamped to a valid date."""
+    from calendar import monthrange
+
+    year, month = (day.year - 1, 12) if day.month == 1 else (day.year, day.month - 1)
+    return date(year, month, min(day.day, monthrange(year, month)[1]))
 
 
 def _income_flows(
@@ -309,6 +323,13 @@ def _income_flows(
     )
 
     for anchor_date, amount, anchor_id, period_days, day_of_month in projections:
+        if moved_to is not None and config.reanchor_moved_payday:
+            # A confirmed new pay date replaces the pay day itself, so the whole
+            # cadence shifts rather than just the next payment.
+            anchor_date = moved_to - timedelta(days=period_days) if period_days else moved_to
+            if period_days is None:
+                day_of_month = moved_to.day
+                anchor_date = _step_back_month(moved_to)
         cursor = anchor_date
         first = True
         while True:
@@ -327,11 +348,10 @@ def _income_flows(
             ):
                 value = confirmed_amount
             if first:
-                # A one-off adjustment or a moved pay date applies to the very
-                # next payment only.
+                # A one-off adjustment applies to the very next payment only.
                 if one_off is not None:
                     value = one_off
-                if moved_to is not None and moved_to <= horizon_end:
+                if moved_to is not None and not config.reanchor_moved_payday:
                     on = moved_to
                 first = False
             flows.append(Flow(on, value, "income", anchor_id, "salary", source="evidence"))
