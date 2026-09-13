@@ -8,7 +8,7 @@ which records move cash and when.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from . import income, recurrence

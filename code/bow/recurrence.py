@@ -83,8 +83,15 @@ class Series:
             return statistics.fmean(amounts)
         if policy == "median":
             return statistics.median(amounts)
+        if policy == "trimmed":
+            # Drop the extreme observations, then average what is left.
+            ordered = sorted(amounts)
+            trimmed = ordered[1:-1] if len(ordered) >= 4 else ordered
+            return statistics.fmean(trimmed)
         if policy.startswith("max"):
             return max(amounts[-int(policy[3:]) :])
+        if policy.startswith("min"):
+            return min(amounts[-int(policy[3:]) :])
         if policy.startswith("mean"):
             return statistics.fmean(amounts[-int(policy[4:]) :])
         raise ValueError(f"unknown forecast policy: {policy}")

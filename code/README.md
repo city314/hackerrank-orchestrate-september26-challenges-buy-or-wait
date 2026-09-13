@@ -104,4 +104,22 @@ only sample requests, which are not scored, and is never used for predictions.
 Measured against the solved samples, the evidence layer improves six of the
 seven requests it touches and costs one: a borderline case where the request is
 exactly affordable and a correctly-read rent increase tips it just over the
-line. Median error on `amount_safe_to_pay` is 7.7%.
+line.
+
+### Calibration, and one policy deliberately not chosen
+
+The forecast knobs were swept jointly against the solved samples. Two turned
+out to interact, which is why neither helped on its own: counting a recurring
+occurrence that lands on the request date only pays off once the variable-spend
+estimate stops double-counting caution. Together they took the sample score
+from 62% to 71.3% and the median error on `amount_safe_to_pay` from 7.7% to
+2.8%.
+
+Taking the minimum of the last three occurrences instead scores about a point
+higher on exact field matches, and it was rejected. It is optimistic by
+construction — 15 of 21 informative samples come out too high, against 8 of 21
+for the chosen mean-of-last-four, which sits within half a percent of unbiased.
+An optimistic bias is the wrong error for this task: it turns requests the user
+cannot actually afford into ones the agent approves, and the spec asks for
+essential variable spending to be forecast conservatively. The extra point
+looked like accuracy but was compensation for that bias.
