@@ -1,193 +1,193 @@
-# HackerRank Orchestrate
+# Buy or Wait?
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon (September 2026).
+An affordability agent that decides whether someone can safely pay for something they
+want, and if not, what they should do instead.
 
-## Buy or Wait?
+Built for [HackerRank Orchestrate](https://www.hackerrank.com/hackerrank-orchestrate-september26),
+a 24 hour AI engineering hackathon. **Ranked 352 of 3,062 participants.**
 
-Build an AI-powered financial agent that decides whether a user can safely afford a requested expense.
-
-A user may ask: **"Can I afford this laptop?"**
-
-Answering well takes more than the current balance. The agent must account for recurring expenses, pending payments, essential spending, confirmed income, available payment options, and relevant details buried in messages and images.
-
-For every request, the agent decides whether the user should pay in full, pay partially, use installments, wait, or not proceed. The recommendation must be personalized: two users with the same balance can deserve different answers based on their commitments, priorities, payment preferences, and willingness to adjust flexible expenses.
-
-A recommendation is safe only if the user can complete the full payment plan, cover essential expenses, and stay above their preferred minimum balance throughout the forecast period.
-
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, allowed values, conflict-resolution rules, and submission format.
+Given a request such as *"Can I afford this laptop?"*, the system answers with a
+number and a plan: how much is safe to pay today, and whether to pay in full, pay
+part now, use one of the offered installment options, wait, or not proceed at all.
 
 ---
 
-## Quick Start
+## The idea
 
-Clone the repository and move into the project directory:
+**Keep the language model out of the arithmetic.**
+
+Four of the six scored fields are exact values: an amount, a date, a payment
+schedule. Language models drift on arithmetic and do not reproduce it run to run.
+So the numbers come from a deterministic simulator, and the model is confined to the
+one part of the problem that is genuinely linguistic: reading untrusted messages and
+payslip photographs.
+
+```
+dataset/  ->  reconstruct state  ->  90 day forecast  ->  rank plans  ->  verify  ->  output.csv
+                      ^
+               evidence patch (LLM)
+```
+
+`amount_safe_to_pay` is the lowest balance the 90 day forecast reaches, minus the
+minimum the user wants to keep, capped at what they asked for. Every candidate plan
+is tested against that same simulation, so the recommendation can never contradict
+the figures printed beside it.
+
+The model returns a fixed schema with no field an injected instruction could occupy,
+and every value is revalidated before the forecast sees it. Event ids must exist,
+amounts must be plausible, dates must parse, categories must come from a known set.
+
+---
+
+## Run it
 
 ```bash
-git clone https://github.com/interviewstreet/hackerrank-orchestrate-september26.git
-cd hackerrank-orchestrate-september26
+python code/main.py               # full run: extract evidence, then solve
+python code/main.py --no-llm      # deterministic only, no API calls
+python code/main.py --samples     # solve the 25 solved examples and self score
+python code/evaluation/main.py    # score every field, with the error distribution
+python explain_request.py request_137   # why one request answered the way it did
 ```
 
-Build your solution in `code/main.py`, or use another language and document its entry point clearly.
+Python 3.10+ and pandas. Nothing else. The model is called over plain HTTPS with the
+standard library. For the evidence layer, put a Gemini key in `.env` at the root:
 
-Your solution must:
-
-- Read the input files from `dataset/`
-- Generate one prediction for every request
-- Write the final predictions to `output.csv` in the repository root
-
-Run the starter Python entry point with:
-
-```bash
-python3 code/main.py
+```
+GOOGLE_API_KEY=your-key-here
 ```
 
-After running your solution, confirm that `output.csv` exists in the repository root and contains the required columns and one row for every request.
-
-## Important File Locations
-
-```text
-dataset/        Input data and the blank output template. Do not modify the input data.
-code/           Your solution code.
-output.csv      Final generated predictions in the repository root.
-code.zip        ZIP file containing your complete solution for submission.
-```
-
-The blank template at `dataset/output.csv` is provided as a reference. Your final generated file must be the root-level `output.csv`.
+Without a key the pipeline still runs end to end and writes a complete, valid
+`output.csv`. It simply skips the message and image evidence.
 
 ---
 
-## Repository Layout
+## What it cost
 
-```text
-.
-├── AGENTS.md                         # Rules for AI coding tools + transcript logging
-├── problem_statement.md              # Full challenge statement
-├── README.md                         # You are here
-├── code/                             # Your solution code
-├── output.csv                        # Final generated predictions
-└── dataset/
-    ├── requests.csv                  # 250 requests to evaluate — predict these
-    ├── output.csv                    # Blank submission template
-    ├── sample_requests.csv           # 25 solved examples
-    ├── financial_profiles.csv        # Balances, minimum balance, priorities, preferences
-    ├── financial_events.csv          # Historical, pending, and confirmed transactions
-    ├── request_payment_options.csv   # Payment options available per request
-    ├── exchange_rates.csv            # Fixed, dated conversion rates
-    ├── messages.csv                  # Messages tied to users, requests, or events
-    ├── images.csv                    # Payroll letters, statements, bills, receipts
-    └── media/
-        └── images/
-```
-
-Only `dataset/requests.csv` requires predictions. Everything else is context. Join user records with `user_id`, request records with `request_id`, supporting evidence with `related_event_id`, and exchange rates with the rate date and currency pair.
-
-Amounts are in the user's `home_currency` — the dataset uses INR, ZAR, IDR, USD, and EUR, and every conversion rate you need is in `exchange_rates.csv`. All dates are `YYYY-MM-DD`. Live exchange rates, market data, and banking access are not required.
-
----
-
-## What You Need to Build
-
-For every row in `dataset/requests.csv`, produce one row in `output.csv` with:
-
-| Column | Meaning |
+| | |
 |---|---|
-| `request_id` | The request being answered |
-| `amount_safe_to_pay` | Largest amount safe to pay on `request_date` before optional spending changes, after protecting essentials and the minimum balance |
-| `affordability_status` | `affordable_now`, `affordable_with_plan`, `affordable_later`, or `not_affordable` |
-| `recommended_payment_method` | `full_payment`, `partial_payment`, `installments`, `wait`, or `not_recommended` |
-| `payment_plan` | Chronological `<YYYY-MM-DD>:<amount>` entries joined by `\|`, or `none` |
-| `earliest_date_for_full_payment` | Earliest date the full amount is forecast safe as one payment; empty if never within the forecast |
-| `spending_changes_needed` | Up to three `stop:<event_id>` / `reduce_to:<event_id>:<amount>` changes joined by `\|`, or `none` |
-| `decision_explanation` | Short explanation and the financial facts behind it |
+| Model | `gemini-3.5-flash-lite`, JSON mode, temperature 0 |
+| Model calls | 42 |
+| Tokens | 411,902 in, 17,343 out |
+| Cost | $0.048 for the whole dataset |
+| Evidence patches | 219 |
+| Failed calls | 0 |
 
-`0 <= amount_safe_to_pay <= requested_amount` must always hold. Installment plans must exactly match a supplied payment option, and only recurring expenses marked flexible may be changed.
-
-`affordable_with_plan` means the full request is completed through a partial-payment schedule, installments, or permitted spending changes. Recommend `partial_payment` only when the request allows it, the user accepts it, `0 < amount_safe_to_pay < requested_amount`, and `earliest_date_for_full_payment` is on or before `desired_completion_date`. Use exactly two payments: pay `amount_safe_to_pay` on `request_date`, then pay the remaining amount on `earliest_date_for_full_payment`. The two payments must add up to `requested_amount`. Unlike installments, partial payment does not need to match a supplied payment option.
-
----
-
-## Suggested Workflow
-
-1. Inspect `dataset/sample_requests.csv` — 25 requests with completed output columns — to understand the expected format and decision style.
-2. Reconstruct each user's financial state from `financial_profiles.csv` and `financial_events.csv`: separate recurring expenses from one-time events, reserve pending transactions, count confirmed salary only on its settlement date, and de-duplicate repeated representations of the same event.
-3. When an event has a blank `amount`, find its `event_id` as `related_event_id` in `images.csv` and extract the amount from the linked image. Never treat a blank amount as zero. Pull in any other relevant messages, images, and payment options for the request.
-4. Forecast forward and generate a plan that keeps the balance above the minimum at every step.
-5. Verify deterministically — bounds, plan feasibility, schedule match, flexible-only spending changes — before writing `output.csv`.
-6. Score yourself on the solved samples, then run the full dataset.
-
-You may use any language or runtime. Python, JavaScript, and TypeScript are all reasonable choices.
+219 requests carry a message or an image. The free tier allows 20 requests per day on
+the default flash model, so one call per request could never finish. Requests without
+images are batched eight to a call, and only the sixteen carrying an image are sent
+alone. Responses are cached by a hash of the payload, so a rerun costs nothing.
 
 ---
 
-## Requirements
+## Five decisions worth reading the code for
 
-Your solution must:
+**Income is separated by what the dataset calls it, not by whether the amount is
+stable.** The `salary` category mixes streams. A payroll credit and a performance
+commission both arrive monthly, but the spec forbids counting commission until it
+settles, while a second household salary moves month to month and is entirely real.
+Amount stability gets this wrong in both directions. The sharpest case: one user's
+final credit is described as *"Final employer payroll"*. The job had ended.
+Projecting that salary forward was a 2000% error on that request.
 
-- be runnable from the terminal
-- read the provided files from `dataset/`
-- produce a valid `output.csv` with the exact required columns in the exact required order
-- include one prediction for every `request_id` in `dataset/requests.csv`
-- not use organizer-only files or hardcoded labels
-- keep behavior deterministic where possible
+**A one off purchase must not join a recurring series.** A bulk grocery bill of
+INR 41,272 sat inside a weekly shop averaging 8,600, and because it landed on the
+same date as a real occurrence an early version summed them into a single 49,988
+instalment and projected it forward. Series now drop amount outliers and occurrences
+off the cadence grid.
 
-If you use API keys or secrets, read them from environment variables. Never hardcode secrets in the repo.
+**Two parameters that only work together.** A recurring bill landing exactly on the
+request date was being dropped, though its latest recorded occurrence is strictly
+earlier so it cannot have been paid. Counting it alone took the sample score *down*
+from 63% to 55%, because the spend estimate was already over reserving. Relaxing that
+estimate alone did little either. Together they took 62% to 71.3%.
+
+**A policy that scored higher and was rejected.** Taking the minimum of the last
+three occurrences as the spend forecast beat the shipped mean of the last four by
+about a point. It was dropped for being optimistic by construction: a backtest across
+all 275 users, trained on earlier history and tested on weeks it had not seen, showed
+it understates spending for 68% of them, against 33% for the policy kept. An
+optimistic bias approves requests the user cannot afford, which is the error the whole
+task exists to prevent.
+
+**Several messages are deliberate distractors.** A prize "still processing", a refund
+"initiated but not credited", a transfer between the user's own accounts. They have no
+matching transaction at all. Their purpose is to punish an agent that invents income
+from hopeful wording. The engine only acts on event ids that exist, so they correctly
+do nothing.
+
+[`code/README.md`](./code/README.md) covers the module layout and the reasoning in
+more depth.
 
 ---
 
-## Evaluation
+## Results, including what went wrong
 
-Your `output.csv` will be compared against hidden ground-truth values.
+| Component | Score |
+|---|---|
+| Code package | 22.2 / 30 |
+| AI judge interview | 21.3 / 30 |
+| Output predictions | 14.1 / 30 |
+| Chat transcript | 2.7 / 10 |
+| **Final** | **60.3 / 100** |
 
-The scoring will consider:
+Two things worth being straight about.
 
-- accuracy of `amount_safe_to_pay`
-- correctness of `affordability_status`
-- correctness of `recommended_payment_method` and `payment_plan`
-- accuracy of `earliest_date_for_full_payment`
-- validity of `spending_changes_needed`
-- usefulness and consistency of `decision_explanation`
+The self scored 71.3% on the 25 solved examples was a *training* score. Those same 25
+rows were used to calibrate the forecast parameters, and the hidden set came in well
+below it. The categorical fields held up better than the amount, which is what you
+would expect when the amount depends on hitting an exact value and the rest depend on
+comparisons.
 
-### Token Usage And Cost Analysis
+The transcript score is a procedural miss rather than a technical one. The brief asked
+for a chat transcript and what I submitted was a structured progress log: summarised
+prose, one entry per working session rather than per turn. It satisfied the format I
+had inferred instead of the deliverable that was actually asked for.
 
-Your `code.zip` must include one token-usage file:
+---
 
-```text
-evaluation/usage_report.md
+## Layout
+
+```
+code/
+  main.py                 entry point
+  bow/
+    loading.py            typed dataset access
+    fx.py                 dated currency conversion
+    recurrence.py         cadence detection, outlier and off grid rejection
+    income.py             separates income that can be counted from income that cannot
+    forecast.py           90 day simulation, amount_safe_to_pay, earliest safe date
+    planner.py            candidate plans and the six way ranking rule
+    verify.py             hard constraint checks with a conservative fallback
+    schema.py             the evidence patch contract and its validator
+    evidence.py           prompt construction, batching, extraction
+    llm.py                Gemini REST client, disk cache, token accounting
+    explain.py            decision_explanation, generated from the committed numbers
+    scoring.py            self scoring against the solved examples
+  evaluation/
+    main.py               scoring and output validation entry point
+    usage_report.md       token and cost report for the final run
+dataset/                  provided input data, unmodified
+output.csv                the submitted predictions
+explain_request.py        per request debugging tool
 ```
 
-The report must cover model providers and names, model calls, input and output tokens, total and average tokens per request, estimated total and per-request cost. The reported values must correspond to the final full-dataset run that produced your `output.csv`.
-
 ---
 
-## Chat Transcript Logging
+## The challenge
 
-This repo includes an [`AGENTS.md`](./AGENTS.md) file for AI coding tools. It asks compatible tools to append conversation summaries to a `log.txt` in the repository root — the same directory as `AGENTS.md`:
+Full task specification in [`problem_statement.md`](./problem_statement.md). The
+dataset in `dataset/` is provided by the organisers and is unmodified; the starter
+repository is
+[interviewstreet/hackerrank-orchestrate-september26](https://github.com/interviewstreet/hackerrank-orchestrate-september26).
 
-| Platform | Path |
-|---|---|
-| macOS / Linux | `<repo root>/log.txt` |
-| Windows | `<repo root>\log.txt` |
+For every row in `dataset/requests.csv` the solution writes one row to `output.csv`:
 
-The path resolves relative to `AGENTS.md`, so it stays correct across clones, renames, and checkouts. `log.txt` is gitignored — upload it as your chat transcript at submission time. Do not paste secrets into the chat.
+```
+request_id, amount_safe_to_pay, affordability_status, recommended_payment_method,
+payment_plan, earliest_date_for_full_payment, spending_changes_needed,
+decision_explanation
+```
 
-In case, the harness you are using is not in the repo root, you can explicitly ask the agent to look for the AGENTS.md in this folder & then continue.
-
----
-
-## Submission
-
-Submit the following files as instructed by HackerRank:
-
-| File | Description |
-|---|---|
-| `code.zip` | Full runnable solution, prompts/configuration, README, and the required `evaluation/` folder |
-| `output.csv` | Predictions for every row in `dataset/requests.csv` |
-| `chat_transcript` | The `log.txt` described above, showing how you developed or used the system |
-
-Before submitting, confirm:
-
-- `output.csv` has one row per row in `dataset/requests.csv` (250 rows plus the header).
-- `output.csv` has the exact required columns in the exact required order.
-- Every `amount_safe_to_pay` satisfies `0 <= amount_safe_to_pay <= requested_amount`.
-- Every installment plan matches a supplied payment option, and every spending change targets a flexible recurring expense.
-- Your runnable code, setup instructions, and `evaluation/` folder are included in `code.zip`.
+A recommendation counts as safe only if the user can complete every listed payment,
+finish by the deadline, cover essential spending, and stay above their preferred
+minimum balance for the whole forecast period.
